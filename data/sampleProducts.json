@@ -1,0 +1,139 @@
+[
+  {
+    "name": "AeroBass Wireless Earbuds",
+    "slug": "aerobass-wireless-earbuds",
+    "description": "Compact wireless earbuds with clear calls, deep bass, and pocket charging case.",
+    "category": "electronics",
+    "subcategory": "headphones-earbuds",
+    "vendorId": "REPLACE_WITH_VENDOR_ID",
+    "status": "active",
+    "images": [
+      "https://placehold.co/900x900/png?text=AeroBass+Earbuds"
+    ],
+    "variants": [
+      {
+        "sku": "AEROBASS-BLK",
+        "size": "Standard",
+        "color": "Black",
+        "price": 1299,
+        "images": [
+          "https://placehold.co/900x900/png?text=AeroBass+Black"
+        ]
+      },
+      {
+        "sku": "AEROBASS-WHT",
+        "size": "Standard",
+        "color": "White",
+        "price": 1299,
+        "images": [
+          "https://placehold.co/900x900/png?text=AeroBass+White"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "UrbanFlex Men's Cotton T-Shirt",
+    "slug": "urbanflex-mens-cotton-tshirt",
+    "description": "Soft cotton crew neck t-shirt for daily wear.",
+    "category": "fashion",
+    "subcategory": "men-clothing",
+    "vendorId": "REPLACE_WITH_VENDOR_ID",
+    "status": "active",
+    "images": [
+      "https://placehold.co/900x900/png?text=UrbanFlex+T-Shirt"
+    ],
+    "variants": [
+      {
+        "sku": "URBANFLEX-TS-BLK-M",
+        "size": "M",
+        "color": "Black",
+        "price": 499,
+        "images": [
+          "https://placehold.co/900x900/png?text=Black+M"
+        ]
+      },
+      {
+        "sku": "URBANFLEX-TS-BLK-L",
+        "size": "L",
+        "color": "Black",
+        "price": 499,
+        "images": [
+          "https://placehold.co/900x900/png?text=Black+L"
+        ]
+      },
+      {
+        "sku": "URBANFLEX-TS-NVY-M",
+        "size": "M",
+        "color": "Navy",
+        "price": 549,
+        "images": [
+          "https://placehold.co/900x900/png?text=Navy+M"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "FreshSteel Lunch Box Set",
+    "slug": "freshsteel-lunch-box-set",
+    "description": "Leak-resistant stainless steel lunch box set for office and school.",
+    "category": "home-kitchen",
+    "subcategory": "storage-containers",
+    "vendorId": "REPLACE_WITH_VENDOR_ID",
+    "status": "active",
+    "images": [
+      "https://placehold.co/900x900/png?text=FreshSteel+Lunch+Box"
+    ],
+    "variants": [
+      {
+        "sku": "FRESHSTEEL-2PC",
+        "size": "2 Piece",
+        "color": "Silver",
+        "price": 699,
+        "images": [
+          "https://placehold.co/900x900/png?text=2+Piece"
+        ]
+      },
+      {
+        "sku": "FRESHSTEEL-3PC",
+        "size": "3 Piece",
+        "color": "Silver",
+        "price": 899,
+        "images": [
+          "https://placehold.co/900x900/png?text=3+Piece"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "GlowRoot Vitamin C Face Serum",
+    "slug": "glowroot-vitamin-c-face-serum",
+    "description": "Lightweight face serum for brighter-looking skin.",
+    "category": "beauty-personal-care",
+    "subcategory": "skincare",
+    "vendorId": "REPLACE_WITH_VENDOR_ID",
+    "status": "active",
+    "images": [
+      "https://placehold.co/900x900/png?text=GlowRoot+Serum"
+    ],
+    "variants": [
+      {
+        "sku": "GLOWROOT-SERUM-30ML",
+        "size": "30 ml",
+        "color": "Default",
+        "price": 349,
+        "images": [
+          "https://placehold.co/900x900/png?text=30+ml"
+        ]
+      },
+      {
+        "sku": "GLOWROOT-SERUM-50ML",
+        "size": "50 ml",
+        "color": "Default",
+        "price": 549,
+        "images": [
+          "https://placehold.co/900x900/png?text=50+ml"
+        ]
+      }
+    ]
+  }
+]

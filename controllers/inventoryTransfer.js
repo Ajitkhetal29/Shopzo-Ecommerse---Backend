@@ -3,6 +3,7 @@ import inventoryTransfer from "../models/inventoryTransfer.js";
 import TransferStatusHistory from "../models/transferStatushistory.js";
 import TransferIssue from "../models/transferIssue.js";
 import Inventory from "../models/inventory.js";
+import { getViewUrl } from "../config/upload.js";
 import { statusRules } from "../utils/status.js";
 import { recomputeAvailable } from "../utils/inventoryStock.js";
 
@@ -27,6 +28,50 @@ const ensureSenderReservedQty = async (senderInventory, needQty, session) => {
     senderInventory.reserved = reserved;
     recomputeAvailable(senderInventory);
     await senderInventory.save({ session });
+};
+
+const ISSUE_RESOLUTION_RULES = {
+    damaged: ["return", "replace"],
+    missing: ["replace", "adjust"],
+    extra: ["return", "adjust"],
+};
+
+const getOrCreateInventory = async (locationType, locationId, variantId, session) => {
+    const filter =
+        locationType === "warehouse"
+            ? { variant: variantId, warehouse: locationId }
+            : { variant: variantId, vendor: locationId };
+    let doc = await Inventory.findOne(filter).session(session);
+    if (doc) return doc;
+
+    doc = await Inventory.create(
+        [
+            {
+                variant: variantId,
+                warehouse: locationType === "warehouse" ? locationId : null,
+                vendor: locationType === "vendor" ? locationId : null,
+                quantity: 0,
+                reserved: 0,
+                available: 0,
+                missingHold: 0,
+                damagedQty: 0,
+                extraHold: 0,
+                locationType,
+            },
+        ],
+        { session }
+    ).then((docs) => docs[0]);
+
+    return doc;
+};
+
+const getKeyFromUrl = (url) => {
+    try {
+        const parsed = new URL(url);
+        return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    } catch (_) {
+        return "";
+    }
 };
 
 const createInventoryTransferRequest = async (req, res) => {
@@ -364,26 +409,46 @@ const getTransferIssues = async (req, res) => {
             TransferIssue.countDocuments(filter),
         ]);
 
-        const issues = rows.map((row) => ({
-            _id: row._id,
-            transferRequest: row.transferRequest?._id ?? null,
-            transferStatus: row.transferRequest?.status ?? null,
-            fromType: row.transferRequest?.fromType ?? null,
-            fromName: row.transferRequest?.fromId?.name ?? null,
-            toType: row.transferRequest?.toType ?? null,
-            toName: row.transferRequest?.toId?.name ?? null,
-            variant: row.variant?._id ?? row.variant ?? null,
-            sku: row.variant?.sku ?? null,
-            issueType: row.issueType,
-            issueQuantity: row.issueQuantity,
-            issueStatus: row.issueStatus,
-            issueDescription: row.issueDescription,
-            issueImages: row.issueImages ?? [],
-            raisedByType: row.raisedByType,
-            raisedByName: row.raisedById?.name ?? null,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-        }));
+        const issues = await Promise.all(
+            rows.map(async (row) => {
+                const rawIssueImages = Array.isArray(row.issueImages) ? row.issueImages : [];
+                const signedIssueImages = await Promise.all(
+                    rawIssueImages.map(async (imgUrl) => {
+                        const key = getKeyFromUrl(imgUrl);
+                        if (!key) return imgUrl;
+                        try {
+                            return await getViewUrl(key);
+                        } catch (_) {
+                            return imgUrl;
+                        }
+                    })
+                );
+
+                return {
+                    _id: row._id,
+                    transferRequest: row.transferRequest?._id ?? null,
+                    transferStatus: row.transferRequest?.status ?? null,
+                    fromType: row.transferRequest?.fromType ?? null,
+                    fromName: row.transferRequest?.fromId?.name ?? null,
+                    toType: row.transferRequest?.toType ?? null,
+                    toName: row.transferRequest?.toId?.name ?? null,
+                    variant: row.variant?._id ?? row.variant ?? null,
+                    sku: row.variant?.sku ?? null,
+                    issueType: row.issueType,
+                    issueQuantity: row.issueQuantity,
+                    issueStatus: row.issueStatus,
+                    issueDescription: row.issueDescription,
+                    issueImages: signedIssueImages,
+                    issueResolutionType: row.issueResolutionType ?? null,
+                    issueResolutionDescription: row.issueResolutionDescription ?? null,
+                    issueResolutionDate: row.issueResolutionDate ?? null,
+                    raisedByType: row.raisedByType,
+                    raisedByName: row.raisedById?.name ?? null,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                };
+            })
+        );
 
         return res.status(200).json({
             success: true,
@@ -398,6 +463,314 @@ const getTransferIssues = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Internal server error",
+        });
+    }
+};
+
+const getTransferIssueResolutionRules = async (req, res) => {
+    try {
+        const { issueType } = req.query;
+        const normalizedIssueType =
+            typeof issueType === "string" &&
+            ["damaged", "missing", "extra"].includes(issueType)
+                ? issueType
+                : null;
+
+        const allowedResolutionTypes = normalizedIssueType
+            ? ISSUE_RESOLUTION_RULES[normalizedIssueType]
+            : [];
+
+        return res.status(200).json({
+            success: true,
+            issueType: normalizedIssueType,
+            allowedResolutionTypes,
+        });
+    } catch (error) {
+        console.error("Get transfer issue resolution rules error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
+    }
+};
+
+const updateTransferIssueStatus = async (req, res) => {
+    try {
+        const {
+            issueId,
+            newStatus,
+            userType,
+            userId,
+            issueResolutionType,
+            issueResolutionDescription,
+        } = req.body;
+
+        if (!issueId || !mongoose.isValidObjectId(issueId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid issueId is required",
+            });
+        }
+        if (
+            !newStatus ||
+            !["pending", "in_progress", "resolved"].includes(newStatus)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid newStatus is required",
+            });
+        }
+        if (
+            !userType ||
+            !["vendor", "warehouse"].includes(userType) ||
+            !userId ||
+            !mongoose.isValidObjectId(userId)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid userType and userId are required",
+            });
+        }
+
+        const issue = await TransferIssue.findById(issueId);
+        if (!issue) {
+            return res.status(404).json({
+                success: false,
+                message: "Transfer issue not found",
+            });
+        }
+        if (issue.issueStatus === "resolved") {
+            return res.status(400).json({
+                success: false,
+                message: "Issue is already resolved",
+            });
+        }
+
+        const transferRequest = await inventoryTransfer.findById(issue.transferRequest);
+        if (!transferRequest) {
+            return res.status(404).json({
+                success: false,
+                message: "Transfer request not found for this issue",
+            });
+        }
+
+        const isSenderActor =
+            transferRequest.fromType === userType &&
+            String(transferRequest.fromId) === String(userId);
+        const isReceiverActor =
+            transferRequest.toType === userType &&
+            String(transferRequest.toId) === String(userId);
+        if (!isSenderActor && !isReceiverActor) {
+            return res.status(403).json({
+                success: false,
+                message: "Actor does not belong to this transfer issue",
+            });
+        }
+
+        // Ownership rules:
+        // receiver: can set pending or resolved + set resolution type first time
+        // sender: can only move to in_progress
+        if (isReceiverActor && !["pending", "resolved"].includes(newStatus)) {
+            return res.status(403).json({
+                success: false,
+                message: "Receiver can only set issue status to pending or resolved",
+            });
+        }
+        if (isSenderActor && newStatus !== "in_progress") {
+            return res.status(403).json({
+                success: false,
+                message: "Sender can only set issue status to in_progress",
+            });
+        }
+        if (isSenderActor && newStatus === "in_progress" && !issue.issueResolutionType) {
+            return res.status(400).json({
+                success: false,
+                message: "Receiver must select resolution type before sender marks in_progress",
+            });
+        }
+
+        const allowedResolutions = ISSUE_RESOLUTION_RULES[issue.issueType] ?? [];
+        if (
+            isReceiverActor &&
+            issueResolutionType !== undefined &&
+            issueResolutionType !== null &&
+            issueResolutionType !== ""
+        ) {
+            if (!allowedResolutions.includes(issueResolutionType)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Valid resolution type is required for issue type ${issue.issueType}`,
+                    allowedResolutionTypes: allowedResolutions,
+                });
+            }
+            if (issue.issueResolutionType && issue.issueResolutionType !== issueResolutionType) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Resolution type is already selected and cannot be changed",
+                });
+            }
+        }
+
+        const effectiveResolutionType =
+            isReceiverActor && newStatus === "resolved"
+                ? (issue.issueResolutionType || issueResolutionType)
+                : issueResolutionType;
+
+        if (isReceiverActor && newStatus === "resolved") {
+            if (!effectiveResolutionType || !allowedResolutions.includes(effectiveResolutionType)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Receiver must set a valid resolution type before resolving",
+                    allowedResolutionTypes: allowedResolutions,
+                });
+            }
+        }
+
+        const qty = Number(issue.issueQuantity || 0);
+        if (qty <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Issue quantity must be greater than 0",
+            });
+        }
+        const session = await mongoose.startSession();
+        try {
+            await session.withTransaction(async () => {
+                if (newStatus === "resolved") {
+                    const senderInventory = await getOrCreateInventory(
+                        transferRequest.fromType,
+                        transferRequest.fromId,
+                        issue.variant,
+                        session
+                    );
+                    const receiverInventory = await getOrCreateInventory(
+                        transferRequest.toType,
+                        transferRequest.toId,
+                        issue.variant,
+                        session
+                    );
+
+                    if (issue.issueType === "damaged") {
+                        if (Number(receiverInventory.damagedQty ?? 0) < qty) {
+                            throw new Error("Receiver damaged stock is insufficient for this resolution");
+                        }
+                        if (effectiveResolutionType === "return") {
+                            if (Number(receiverInventory.quantity ?? 0) < qty) {
+                                throw new Error("Receiver quantity is insufficient for damaged return");
+                            }
+                            receiverInventory.quantity = Number(receiverInventory.quantity ?? 0) - qty;
+                            receiverInventory.damagedQty = Number(receiverInventory.damagedQty ?? 0) - qty;
+                            senderInventory.quantity = Number(senderInventory.quantity ?? 0) + qty;
+                            senderInventory.damagedQty = Number(senderInventory.damagedQty ?? 0) + qty;
+                        } else if (effectiveResolutionType === "replace") {
+                            if (Number(senderInventory.quantity ?? 0) < qty) {
+                                throw new Error("Sender quantity is insufficient for damaged replacement");
+                            }
+                            senderInventory.quantity = Number(senderInventory.quantity ?? 0) - qty;
+                            receiverInventory.quantity = Number(receiverInventory.quantity ?? 0) + qty;
+                            receiverInventory.damagedQty = Number(receiverInventory.damagedQty ?? 0) - qty;
+                        } else {
+                            throw new Error("Invalid damaged resolution type");
+                        }
+                    } else if (issue.issueType === "missing") {
+                        if (Number(senderInventory.missingHold ?? 0) < qty) {
+                            throw new Error("Sender missing hold is insufficient for this resolution");
+                        }
+                        if (effectiveResolutionType === "replace") {
+                            if (Number(senderInventory.quantity ?? 0) < qty) {
+                                throw new Error("Sender quantity is insufficient for missing replacement");
+                            }
+                            senderInventory.missingHold = Number(senderInventory.missingHold ?? 0) - qty;
+                            senderInventory.quantity = Number(senderInventory.quantity ?? 0) - qty;
+                            receiverInventory.quantity = Number(receiverInventory.quantity ?? 0) + qty;
+                        } else if (effectiveResolutionType === "adjust") {
+                            senderInventory.missingHold = Number(senderInventory.missingHold ?? 0) - qty;
+                        } else {
+                            throw new Error("Invalid missing resolution type");
+                        }
+                    } else if (issue.issueType === "extra") {
+                        if (Number(receiverInventory.extraHold ?? 0) < qty) {
+                            throw new Error("Receiver extra hold is insufficient for this resolution");
+                        }
+                        if (effectiveResolutionType === "return") {
+                            if (Number(receiverInventory.quantity ?? 0) < qty) {
+                                throw new Error("Receiver quantity is insufficient for extra return");
+                            }
+                            receiverInventory.quantity = Number(receiverInventory.quantity ?? 0) - qty;
+                            receiverInventory.extraHold = Number(receiverInventory.extraHold ?? 0) - qty;
+                            senderInventory.quantity = Number(senderInventory.quantity ?? 0) + qty;
+                        } else if (effectiveResolutionType === "adjust") {
+                            receiverInventory.extraHold = Number(receiverInventory.extraHold ?? 0) - qty;
+                        } else {
+                            throw new Error("Invalid extra resolution type");
+                        }
+                    } else {
+                        throw new Error("Unsupported issue type");
+                    }
+
+                    recomputeAvailable(senderInventory);
+                    recomputeAvailable(receiverInventory);
+                    await senderInventory.save({ session });
+                    await receiverInventory.save({ session });
+                }
+
+                issue.issueStatus = newStatus;
+                if (isReceiverActor && issueResolutionType && !issue.issueResolutionType) {
+                    issue.issueResolutionType = issueResolutionType;
+                }
+                if (newStatus === "resolved") {
+                    issue.issueResolutionDescription =
+                        typeof issueResolutionDescription === "string"
+                            ? issueResolutionDescription
+                            : "";
+                    issue.issueResolutionDate = new Date();
+                    issue.issueResolvedByType = userType === "vendor" ? "Vendor" : "Warehouse";
+                    issue.issueResolvedById = userId;
+                }
+                await issue.save({ session });
+
+                if (newStatus === "resolved") {
+                    const pendingCount = await TransferIssue.countDocuments({
+                        transferRequest: issue.transferRequest,
+                        issueStatus: { $ne: "resolved" },
+                    }).session(session);
+
+                    if (pendingCount === 0) {
+                        transferRequest.status = "completed";
+                        transferRequest.completedAt = new Date();
+                        await transferRequest.save({ session });
+
+                        const changedByModel = userType === "vendor" ? "Vendor" : "Warehouse";
+                        await TransferStatusHistory.create(
+                            [
+                                {
+                                    transferRequest: transferRequest._id,
+                                    status: "completed",
+                                    changedAt: new Date(),
+                                    changedByType: userType,
+                                    changedByModel,
+                                    changedById: userId,
+                                },
+                            ],
+                            { session }
+                        );
+                    }
+                }
+            });
+        } finally {
+            session.endSession();
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Transfer issue updated successfully",
+            issue,
+        });
+    } catch (error) {
+        console.error("Update transfer issue status error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Internal server error",
         });
     }
 };
@@ -904,7 +1277,7 @@ const createIssueReportedTransfer = async (req, res) => {
                     }
 
                     if (issueDocs.length > 0) {
-                        await TransferIssue.create(issueDocs, { session });
+                        await TransferIssue.insertMany(issueDocs, { session, ordered: true });
                     }
                 }
 
@@ -963,6 +1336,8 @@ export {
     getInventoryTransferRequestById,
     getInventoryTransferStatusRules,
     getTransferIssues,
+    getTransferIssueResolutionRules,
+    updateTransferIssueStatus,
     updateTransferStatus,
     completeTransfer,
     createIssueReportedTransfer,

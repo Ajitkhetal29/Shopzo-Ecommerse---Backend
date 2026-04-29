@@ -233,6 +233,130 @@ const updateInventory = async (req, res) => {
 };
 
 
+const adjustInventoryBuckets = async (req, res) => {
+    try {
+        const { inventoryId, vendorId, damagedQty, missingHold, addQuantity, reduceQuantity } = req.body;
+
+        if (!inventoryId) {
+            return res.status(400).json({
+                success: false,
+                message: "inventoryId is required",
+            });
+        }
+
+        const hasDamaged = damagedQty !== undefined && damagedQty !== null;
+        const hasMissing = missingHold !== undefined && missingHold !== null;
+        const hasAddQuantity = addQuantity !== undefined && addQuantity !== null;
+        const hasReduceQuantity = reduceQuantity !== undefined && reduceQuantity !== null;
+        if (!hasDamaged && !hasMissing && !hasAddQuantity && !hasReduceQuantity) {
+            return res.status(400).json({
+                success: false,
+                message: "Provide at least one field: damagedQty, missingHold, addQuantity, or reduceQuantity",
+            });
+        }
+
+        const inventory = await Inventory.findById(inventoryId);
+        if (!inventory) {
+            return res.status(404).json({
+                success: false,
+                message: "Inventory not found",
+            });
+        }
+
+        if (vendorId && String(inventory.vendor) !== String(vendorId)) {
+            return res.status(403).json({
+                success: false,
+                message: "You cannot adjust another vendor inventory",
+            });
+        }
+
+        if (hasDamaged) {
+            const nextDamaged = Number(damagedQty);
+            if (!Number.isFinite(nextDamaged) || nextDamaged < 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "damagedQty must be a non-negative number",
+                });
+            }
+            inventory.damagedQty = nextDamaged;
+        }
+
+        if (hasMissing) {
+            const nextMissing = Number(missingHold);
+            if (!Number.isFinite(nextMissing) || nextMissing < 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "missingHold must be a non-negative number",
+                });
+            }
+            inventory.missingHold = nextMissing;
+        }
+
+        let parsedAddQuantity = 0;
+        if (hasAddQuantity) {
+            parsedAddQuantity = Number(addQuantity);
+            if (!Number.isFinite(parsedAddQuantity) || parsedAddQuantity < 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "addQuantity must be a non-negative number",
+                });
+            }
+        }
+
+        let parsedReduceQuantity = 0;
+        if (hasReduceQuantity) {
+            parsedReduceQuantity = Number(reduceQuantity);
+            if (!Number.isFinite(parsedReduceQuantity) || parsedReduceQuantity < 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "reduceQuantity must be a non-negative number",
+                });
+            }
+        }
+
+        const currentQuantity = Number(inventory.quantity ?? 0);
+        const nextQuantity = currentQuantity + parsedAddQuantity - parsedReduceQuantity;
+        if (nextQuantity < 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid quantity change: resulting total cannot be negative",
+            });
+        }
+
+        if (hasAddQuantity || hasReduceQuantity) {
+            inventory.quantity = nextQuantity;
+        }
+
+        const q = Number(inventory.quantity ?? 0);
+        const r = Number(inventory.reserved ?? 0);
+        const mh = Number(inventory.missingHold ?? 0);
+        const dq = Number(inventory.damagedQty ?? 0);
+        const eh = Number(inventory.extraHold ?? 0);
+        if (r + mh + dq + eh > q) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid stock split: reserved + missing + damaged + extraHold cannot exceed total quantity",
+            });
+        }
+
+        recomputeAvailable(inventory);
+        await inventory.save({ validateBeforeSave: true });
+
+        return res.status(200).json({
+            success: true,
+            message: "Inventory buckets updated successfully",
+            inventory,
+        });
+    } catch (error) {
+        console.error("Adjust inventory buckets error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
+    }
+};
+
+
 const deleteInventory = async (req, res) => {
     try {
         const { inventoryId } = req.body;
@@ -313,4 +437,4 @@ const getInventoryById = async (req, res) => {
 
 
 
-export { createInventory, getInventory, updateInventory, deleteInventory, getInventoryById };   
+export { createInventory, getInventory, updateInventory, adjustInventoryBuckets, deleteInventory, getInventoryById };   

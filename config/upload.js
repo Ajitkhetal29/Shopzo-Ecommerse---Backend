@@ -4,7 +4,7 @@ import s3Client  from "./s3.js";
 
 export const generateUploadUrl = async (req, res) => {
     try {
-        const { fileName, fileType, productId, sku, userId, type } = req.body;
+        const { fileName, fileType, productId, sku, userId, transferId, type } = req.body;
 
         if (!fileName || !fileType || !type) {
             return res.status(400).json({
@@ -33,6 +33,8 @@ export const generateUploadUrl = async (req, res) => {
                 });
             }
             key = `uploads/products/${productId}/variants/${sku}/${Date.now()}-${fileName}`;
+        } else if (type === "transferIssue") {
+            key = `uploads/transfers/${transferId || "unassigned"}/issues/${Date.now()}-${fileName}`;
         } else {
             return res.status(400).json({
                 success: false,
