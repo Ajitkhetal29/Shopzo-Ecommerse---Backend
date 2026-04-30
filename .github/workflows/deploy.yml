@@ -10,9 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -20,13 +17,13 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/shopzo-backend
-            git pull origin main
-            npm install
-            pm2 restart backend
+            cd ~/Shopzo-Ecommerse---Backend
 
-            cd ~/shopzo-vendor
             git pull origin main
-            npm install
-            npm run build
-            pm2 restart vendor
+
+            docker build -t shopzo-backend .
+
+            docker stop backend-container || true
+            docker rm backend-container || true
+
+            docker run -d -p 8000:8000 --env-file .env --name backend-container shopzo-backend
