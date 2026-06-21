@@ -48,8 +48,6 @@ const variantSchema = new mongoose.Schema(
 
 // Indexes
 variantSchema.index({ product: 1, isActive: 1 });
-variantSchema.index({ sku: 1 });
 
-
-const Variant = mongoose.model("Variant", variantSchema);
+const Variant = mongoose.models.Variant || mongoose.model("Variant", variantSchema);
 export default Variant;

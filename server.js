@@ -29,6 +29,7 @@ import inventoryRouter from "./routes/inventory.js";
 import { authMiddleware, vendorAuthMiddleware } from "./middleware/auth.js";
 import inventoryTransferRouter from "./routes/transferInventory.js";
 import uploadRouter from "./routes/upload.js";
+import cartRouter from "./routes/cart.js";
 import helmet from "helmet";
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -87,6 +88,7 @@ app.use("/api/user-reporting", userReportingRouter);
 app.use("/api/category", categoryRouter);
 app.use("/api/subcategory", subcategoryRouter);
 app.use("/api/product", productRouter);
+app.use("/api/cart", cartRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/inventoryTransfer", inventoryTransferRouter)
