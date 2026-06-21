@@ -1,13 +1,16 @@
 import express from "express";
-import { createProduct, getProducts, deleteProduct, getProductById, updateProduct , addVariant, getProductvariants,
+import { createProduct, getProducts, getProductsBySubcategory, getHomeCategoryShowcase, deleteProduct, getProductById, getProductBySlug, updateProduct , addVariant, getProductvariants,
     getVariantById, updateVariant, deleteVariant
 } from "../controllers/product.js";
 
 const productRouter = express.Router();
 
 productRouter.get("/list",  getProducts);
+productRouter.get("/home-showcase", getHomeCategoryShowcase);
+productRouter.get("/by-subcategory", getProductsBySubcategory);
 productRouter.post("/add",  createProduct);
 productRouter.delete("/delete/:id",  deleteProduct);
+productRouter.get("/slug/:slug", getProductBySlug);
 productRouter.get("/:id",  getProductById);
 productRouter.put("/update/:id",  updateProduct);
 productRouter.post("/variants/add",  addVariant);

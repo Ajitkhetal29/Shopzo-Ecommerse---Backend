@@ -177,6 +177,140 @@ const createProduct = async (req, res) => {
   }
 };
 
+const pickRandom = (list, count) => {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, count);
+};
+
+// 4 random categories, each with 4 random products (for buyer home)
+const getHomeCategoryShowcase = async (req, res) => {
+  try {
+    const categoryIds = await Product.distinct("category");
+    const categories = await Category.find({ _id: { $in: categoryIds } }).lean();
+    const pickedCategories = pickRandom(categories, Math.min(4, categories.length));
+
+    const sections = [];
+
+    for (const cat of pickedCategories) {
+      let products = await Product.find({ category: cat._id, status: "active" })
+        .populate("subcategory", "name slug")
+        .lean();
+
+      if (products.length === 0) {
+        products = await Product.find({ category: cat._id })
+          .populate("subcategory", "name slug")
+          .lean();
+      }
+
+      const pickedProducts = pickRandom(products, Math.min(4, products.length));
+      const productsWithUrls = [];
+
+      for (const product of pickedProducts) {
+        productsWithUrls.push(await addViewUrlsToEntity(product));
+      }
+
+      sections.push({
+        category: { _id: cat._id, name: cat.name, slug: cat.slug },
+        products: productsWithUrls.map((p) => ({
+          _id: p._id,
+          name: p.name,
+          slug: p.slug,
+          images: p.images || [],
+          subcategory: p.subcategory || null,
+        })),
+      });
+    }
+
+    return res.status(200).json({ success: true, sections });
+  } catch (error) {
+    console.error("Home category showcase error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// 10 products for a subcategory (buyer carousel)
+const getProductsBySubcategory = async (req, res) => {
+  try {
+    const { subcategoryName } = req.query;
+
+    if (!subcategoryName || !String(subcategoryName).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "subcategoryName is required",
+      });
+    }
+
+    const name = String(subcategoryName).trim();
+    const subcategory = await Subcategory.findOne({
+      name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+    });
+
+    if (!subcategory) {
+      return res.status(404).json({
+        success: false,
+        message: "Subcategory not found",
+      });
+    }
+
+    let products = await Product.find({
+      subcategory: subcategory._id,
+      status: "active",
+    })
+      .limit(10)
+      .lean();
+
+    if (products.length === 0) {
+      products = await Product.find({ subcategory: subcategory._id }).limit(10).lean();
+    }
+
+    const list = [];
+
+    for (const product of products) {
+      const withUrls = await addViewUrlsToEntity(product);
+      list.push({
+        _id: withUrls._id,
+        name: withUrls.name,
+        slug: withUrls.slug,
+        image: withUrls.images?.[0]?.url || "",
+      });
+    }
+
+    return res.status(200).json({ success: true, products: list });
+  } catch (error) {
+    console.error("Products by subcategory error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const attachMinPrices = async (products = []) => {
+  if (products.length === 0) return products;
+
+  const productIds = products.map((product) => product._id);
+  const priceRows = await Variant.aggregate([
+    { $match: { product: { $in: productIds } } },
+    { $group: { _id: "$product", minPrice: { $min: "$price" } } },
+  ]);
+
+  const priceMap = new Map(
+    priceRows.map((row) => [String(row._id), row.minPrice]),
+  );
+
+  return products.map((product) => ({
+    ...product,
+    minPrice: priceMap.get(String(product._id)) ?? null,
+  }));
+};
+
 const getProducts = async (req, res) => {
   try {
     const {
@@ -185,16 +319,33 @@ const getProducts = async (req, res) => {
       categoryId,
       subcategoryId,
       vendorId,
+      minPrice,
+      maxPrice,
     } = req.query;
     const skip =
       (Math.max(1, parseInt(page, 10)) - 1) *
       Math.min(100, Math.max(1, parseInt(limit, 10)));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
 
-    const filter = {};
+    const filter = { status: "active" };
     if (categoryId) filter.category = categoryId;
     if (subcategoryId) filter.subcategory = subcategoryId;
     if (vendorId) filter.vendor = vendorId;
+
+    if (minPrice || maxPrice) {
+      const priceMatch = {};
+      if (minPrice) priceMatch.$gte = parseFloat(minPrice);
+      if (maxPrice) priceMatch.$lte = parseFloat(maxPrice);
+
+      const matchingProducts = await Variant.aggregate([
+        { $group: { _id: "$product", minPrice: { $min: "$price" } } },
+        { $match: { minPrice: priceMatch } },
+      ]);
+
+      filter._id = {
+        $in: matchingProducts.map((row) => row._id),
+      };
+    }
 
     const [products, totalCount] = await Promise.all([
       Product.find(filter)
@@ -208,8 +359,10 @@ const getProducts = async (req, res) => {
       Product.countDocuments(filter),
     ]);
 
+    const productsWithPrices = await attachMinPrices(products);
     const productsWithViewUrls = [];
-    for (const product of products) {
+
+    for (const product of productsWithPrices) {
       productsWithViewUrls.push(await addViewUrlsToEntity(product));
     }
 
@@ -288,6 +441,37 @@ const getProductById = async (req, res) => {
     });
   } catch (error) {
     console.error("Get product by id error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const getProductBySlug = async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").trim().toLowerCase();
+    const product = await Product.findOne({ slug, status: "active" })
+      .populate("category", "name slug")
+      .populate("subcategory", "name slug")
+      .populate("vendor", "name");
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const productWithViewUrls = await addViewUrlsToEntity(product);
+
+    return res.status(200).json({
+      success: true,
+      message: "Product fetched successfully",
+      product: productWithViewUrls,
+    });
+  } catch (error) {
+    console.error("Get product by slug error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -631,8 +815,11 @@ const deleteVariant = async (req, res) => {
 export {
   createProduct,
   getProducts,
+  getProductsBySubcategory,
+  getHomeCategoryShowcase,
   deleteProduct,
   getProductById,
+  getProductBySlug,
   updateProduct,
   addVariant,
   getProductvariants,
