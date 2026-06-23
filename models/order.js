@@ -5,8 +5,9 @@ import User from "../models/user.js";
 
 const orderStatus = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 const paymentStatus = ["pending", "paid", "failed", "refunded"];
+const paymentMethod = ["cod", "online"];
 
-const OrerSchema = new mongoose.Schema({
+const OrderSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
@@ -17,7 +18,7 @@ const OrerSchema = new mongoose.Schema({
       {
         product: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
+          ref: "Variant",
           required: true,
         },
         quantity: {
@@ -29,13 +30,15 @@ const OrerSchema = new mongoose.Schema({
     ],
     default: [],
   },
-  totalPrice : {type : Number},
-  DeliveryAddress : {type : String},
-  status : {type : String, enum : orderStatus, default : "pending"},
+  totalAmount : {type : Number},
+  // deliveryAddress : {type : String},
+  orderStatus : {type : String, enum : orderStatus, default : "pending"},
   paymentStatus : {type : String, enum : paymentStatus, default : "pending"},
+  paymentMethod : {type : String, enum : paymentMethod, default : "cod"},
+  razorpayOrderId : {type : String},
+  razorpayPaymentId : {type : String},
 
+},{ timestamps: true });
 
-});
-
-const Order = mongoose.models.Order || mongoose.model("Order", OrerSchema);
+const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 export default Order;
